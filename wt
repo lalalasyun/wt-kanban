@@ -13,30 +13,25 @@ SERVICE_NAME="kanban"
 
 usage() {
   cat <<'EOF'
-wt - worktree + kanban + tmux ワークフロー管理
+wt - kanban サーバー管理 CLI
 
 使い方:
-  wt add    <タスク説明> [ブランチ]   タスクを作成 (kanban backlog に追加)
-  wt start  <task-id>               タスクを開始 (worktree 作成 + エージェント起動)
-  wt ls     [カラム]                 タスク一覧 (backlog|in_progress|review|trash)
-  wt rm     <task-id>               タスクを削除 (worktree もクリーンアップ)
   wt up                             kanban サーバーを起動
   wt down                           kanban サーバーを停止
   wt log                            kanban サーバーのログ
   wt status                         全体の状態サマリ
+  wt install-service                systemd で永続化
+
+タスク管理は kanban コマンドを直接使用:
+  kanban task create --prompt <説明> --project-path . --base-ref main --auto-review-mode pr
+  kanban task start  --task-id <id> --project-path .
+  kanban task list   --project-path .
+  kanban task trash  --task-id <id> --project-path .
 
 環境変数:
   WT_PROJECT        対象リポジトリのパス (デフォルト: git root)
   WT_TMUX_SESSION   tmux セッション名 (デフォルト: dev)
   WT_PORT           kanban ポート (デフォルト: 3484)
-
-例:
-  wt up
-  wt add "Issue #45: archive search を実装" main
-  wt start 34966
-  wt ls
-  wt rm 34966
-  wt down
 EOF
 }
 
@@ -49,26 +44,6 @@ require_kanban() {
     exit 1
   fi
 }
-
-ensure_server() {
-  if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
-    return 0
-  fi
-  echo "kanban サーバーを起動しています..."
-  cmd_up
-  # 起動待ち
-  for i in $(seq 1 10); do
-    sleep 1
-    if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
-      return 0
-    fi
-  done
-  echo "Error: kanban サーバーの起動に失敗しました"
-  echo "  wt log でログを確認してください"
-  exit 1
-}
-
-# ──────────────────────────────────────────────
 
 cmd_up() {
   require_kanban
@@ -137,46 +112,6 @@ UNIT
   echo "  再起動後も自動で起動します"
 }
 
-cmd_add() {
-  local prompt="${1:?タスク説明を指定: wt add <説明> [ブランチ]}"
-  local base="${2:-main}"
-  require_kanban
-  ensure_server
-  kanban task create \
-    --prompt "$prompt" \
-    --project-path "$PROJECT" \
-    --base-ref "$base"
-}
-
-cmd_start() {
-  local task_id="${1:?task-id を指定: wt start <task-id>}"
-  require_kanban
-  ensure_server
-  kanban task start \
-    --task-id "$task_id" \
-    --project-path "$PROJECT"
-}
-
-cmd_ls() {
-  local column="${1:-}"
-  require_kanban
-  ensure_server
-  if [ -n "$column" ]; then
-    kanban task list --project-path "$PROJECT" --column "$column"
-  else
-    kanban task list --project-path "$PROJECT"
-  fi
-}
-
-cmd_rm() {
-  local task_id="${1:?task-id を指定: wt rm <task-id>}"
-  require_kanban
-  ensure_server
-  kanban task trash \
-    --task-id "$task_id" \
-    --project-path "$PROJECT"
-}
-
 cmd_status() {
   echo "=== Project ==="
   echo "  $PROJECT"
@@ -211,10 +146,6 @@ case "${1:-}" in
   up)      cmd_up ;;
   down)    cmd_down ;;
   log)     cmd_log ;;
-  add)     shift; cmd_add "$@" ;;
-  start)   shift; cmd_start "$@" ;;
-  ls)      shift; cmd_ls "$@" ;;
-  rm)      shift; cmd_rm "$@" ;;
   status)  cmd_status ;;
   install-service) cmd_install_service ;;
   -h|--help) usage ;;

@@ -1,8 +1,8 @@
 # wt-kanban
 
-worktree + kanban + tmux + Claude Code のワークフロー管理 CLI。
+kanban サーバー管理 + worktree 並列運用 CLI。
 
-[cline kanban](https://github.com/cline/kanban) をベースに、`wt` コマンドでタスク管理・worktree 分離・tmux 並列運用をシンプルに行う。
+[cline kanban](https://github.com/cline/kanban) のサーバー管理を `wt` コマンドで行い、タスク管理は kanban を直接使用する。
 
 ## インストール
 
@@ -14,22 +14,49 @@ curl -fsSL https://raw.githubusercontent.com/lalalasyun/wt-kanban/main/install.s
 
 - git, tmux, Node.js, npm
 - [cline kanban](https://github.com/cline/kanban) (`install.sh` が自動インストール)
+- [GitHub CLI](https://cli.github.com/) (`gh`) — PR 作成に必要
 
-## コマンド一覧
+## wt コマンド (サーバー管理)
 
 ```
 wt up                              kanban サーバーを起動
 wt down                            kanban サーバーを停止
 wt log                             kanban サーバーのログ表示
-wt add <タスク説明> [ブランチ]       タスクを作成
-wt start <task-id>                 タスクを開始 (worktree + エージェント)
-wt ls [カラム]                      タスク一覧
-wt rm <task-id>                    タスクを削除
 wt status                          全体の状態サマリ
 wt install-service                 systemd で永続化 (初回のみ)
 ```
 
-`wt add` / `wt ls` / `wt start` / `wt rm` はサーバー未起動時に自動で `wt up` する。
+## タスク管理 (kanban 直接使用)
+
+```bash
+# タスク作成 (PR自動作成モード)
+kanban task create \
+  --prompt "機能実装の説明" \
+  --project-path . \
+  --base-ref main \
+  --auto-review-mode pr
+
+# タスク開始 (worktree 作成 + エージェント起動)
+kanban task start --task-id <id> --project-path .
+
+# タスク一覧
+kanban task list --project-path .
+kanban task list --project-path . --column in_progress
+
+# タスク削除
+kanban task trash --task-id <id> --project-path .
+
+# タスク依存関係
+kanban task link --task-id <id1> --linked-task-id <id2> --project-path .
+```
+
+### auto-review-mode
+
+| モード | 動作 |
+|--------|------|
+| `commit` | 完了時にベースブランチへ cherry-pick |
+| `pr` | 完了時にエージェントが `gh pr create` でPR作成 |
+| `move_to_trash` | 完了時にそのまま trash へ移動 |
 
 ## セットアップ
 
@@ -44,46 +71,19 @@ wt install-service
 wt status
 ```
 
-## 使い方
-
-```bash
-# タスクを追加
-wt add "Issue #45: archive search を実装" main
-
-# タスク一覧
-wt ls
-wt ls in_progress
-
-# タスク開始 (worktree 作成 + エージェント起動)
-wt start <task-id>
-
-# タスク削除
-wt rm <task-id>
-
-# サーバー管理
-wt up       # 起動
-wt down     # 停止
-wt log      # ログ
-```
-
 ## 運用パターン
 
-### 単発の長時間作業
+### 複数タスク並列 (PR自動作成)
 
 ```bash
-tmux new -s dev
-cd ~/workspace/your-project
-while true; do claude; echo "exited: $(date)"; sleep 2; done
-```
+# サーバー起動
+wt up
 
-### 複数タスク並列
-
-```bash
-# タスク追加 → 開始 (サーバーは自動起動)
-wt add "Issue #45: 機能実装" main
-wt add "Issue #46: ドキュメント整備" main
-wt start <task-id-1>
-wt start <task-id-2>
+# タスク追加 → 開始
+kanban task create --prompt "機能A実装" --project-path . --base-ref main --auto-review-mode pr
+kanban task create --prompt "機能B実装" --project-path . --base-ref main --auto-review-mode pr
+kanban task start --task-id <id1> --project-path .
+kanban task start --task-id <id2> --project-path .
 
 # 状態確認
 wt status
@@ -98,6 +98,14 @@ ssh -L 3484:localhost:3484 user@server
 ```
 
 ブラウザで `http://localhost:3484` を開く。
+
+## Worktree
+
+kanban がタスクごとに `~/.cline/worktrees/<taskId>/` に git worktree を自動作成する。
+
+- detached HEAD でベースコミットから分離
+- gitignore 対象 (node_modules 等) はシンボリックリンクで共有
+- タスク削除時に自動クリーンアップ
 
 ## 環境変数
 

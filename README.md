@@ -107,6 +107,49 @@ ssh -L 3484:localhost:3484 user@server
 | `WT_TMUX_SESSION` | `dev` | tmux セッション名 |
 | `WT_PORT` | `3484` | kanban ポート |
 
+## トラブルシューティング
+
+### ワークスペースの JSON ファイルが壊れた場合
+
+kanban は `~/.cline/kanban/workspaces/<workspace>/` 以下に状態ファイルを保持する。バリデーションエラーが出た場合、以下の正しいフォーマットで再作成する。
+
+**board.json** — ボード状態 (`RuntimeBoardData`)
+
+```json
+{
+  "columns": [
+    { "id": "backlog", "title": "Backlog", "cards": [] },
+    { "id": "in_progress", "title": "In Progress", "cards": [] },
+    { "id": "review", "title": "Review", "cards": [] },
+    { "id": "trash", "title": "Trash", "cards": [] }
+  ],
+  "dependencies": []
+}
+```
+
+- `columns` は配列（オブジェクトではない）
+- 4 つのカラム ID (`backlog`, `in_progress`, `review`, `trash`) が必須
+
+**sessions.json** — セッション状態 (`Record<string, SessionSummary>`)
+
+```json
+{}
+```
+
+- トップレベルが直接 `Record<taskId, Session>` のオブジェクト
+- `{ "sessions": {} }` のようにラップしない
+
+**meta.json** — メタデータ (`WorkspaceStateMeta`)
+
+```json
+{
+  "revision": 0,
+  "updatedAt": 0
+}
+```
+
+- `updatedAt` は数値（Unix タイムスタンプ）。文字列の日付ではない
+
 ## アンインストール
 
 ```bash

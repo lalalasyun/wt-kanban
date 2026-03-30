@@ -7,6 +7,7 @@ set -euo pipefail
 PROJECT="${WT_PROJECT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 TMUX_SESSION="${WT_TMUX_SESSION:-dev}"
 KANBAN_PORT="${WT_PORT:-3484}"
+SERVICE_NAME="kanban"
 
 # ──────────────────────────────────────────────
 
@@ -15,12 +16,14 @@ usage() {
 wt - worktree + kanban + tmux ワークフロー管理
 
 使い方:
-  wt add   <タスク説明> [ブランチ]   タスクを作成 (kanban backlog に追加)
-  wt start <task-id>               タスクを開始 (worktree 作成 + tmux + claude)
-  wt ls    [カラム]                 タスク一覧 (backlog|in_progress|review|trash)
-  wt rm    <task-id>               タスクを削除 (worktree もクリーンアップ)
-  wt board                         kanban Web UI を起動
-  wt status                        全体の状態サマリ
+  wt add    <タスク説明> [ブランチ]   タスクを作成 (kanban backlog に追加)
+  wt start  <task-id>               タスクを開始 (worktree 作成 + エージェント起動)
+  wt ls     [カラム]                 タスク一覧 (backlog|in_progress|review|trash)
+  wt rm     <task-id>               タスクを削除 (worktree もクリーンアップ)
+  wt up                             kanban サーバーを起動
+  wt down                           kanban サーバーを停止
+  wt log                            kanban サーバーのログ
+  wt status                         全体の状態サマリ
 
 環境変数:
   WT_PROJECT        対象リポジトリのパス (デフォルト: git root)
@@ -28,12 +31,12 @@ wt - worktree + kanban + tmux ワークフロー管理
   WT_PORT           kanban ポート (デフォルト: 3484)
 
 例:
+  wt up
   wt add "Issue #45: archive search を実装" main
   wt start 34966
   wt ls
-  wt ls in_progress
   wt rm 34966
-  wt board
+  wt down
 EOF
 }
 
@@ -47,21 +50,98 @@ require_kanban() {
   fi
 }
 
-require_server() {
-  if ! curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
-    echo "Error: kanban サーバーが起動していません"
-    echo "  wt board  で起動するか、別ターミナルで kanban --no-open を実行してください"
-    exit 1
+ensure_server() {
+  if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
+    return 0
   fi
+  echo "kanban サーバーを起動しています..."
+  cmd_up
+  # 起動待ち
+  for i in $(seq 1 10); do
+    sleep 1
+    if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
+      return 0
+    fi
+  done
+  echo "Error: kanban サーバーの起動に失敗しました"
+  echo "  wt log でログを確認してください"
+  exit 1
 }
 
 # ──────────────────────────────────────────────
+
+cmd_up() {
+  require_kanban
+  if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
+    echo "kanban: 既に起動中 (port $KANBAN_PORT)"
+    return 0
+  fi
+  if systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null; then
+    systemctl --user start "$SERVICE_NAME"
+    echo "kanban: 起動 (systemd)"
+  else
+    echo "kanban: systemd サービス未登録。フォアグラウンドで起動します"
+    echo "  永続化するには: wt install-service"
+    exec kanban --no-open --port "$KANBAN_PORT"
+  fi
+  echo "http://127.0.0.1:${KANBAN_PORT}/"
+}
+
+cmd_down() {
+  if systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null; then
+    systemctl --user stop "$SERVICE_NAME"
+    echo "kanban: 停止 (systemd)"
+  else
+    local pid
+    pid=$(lsof -ti :"$KANBAN_PORT" 2>/dev/null || true)
+    if [ -n "$pid" ]; then
+      kill "$pid"
+      echo "kanban: 停止 (pid $pid)"
+    else
+      echo "kanban: 起動していません"
+    fi
+  fi
+}
+
+cmd_log() {
+  if systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null; then
+    journalctl --user -u "$SERVICE_NAME" -f
+  else
+    echo "systemd サービス未登録です"
+  fi
+}
+
+cmd_install_service() {
+  require_kanban
+  local service_dir="$HOME/.config/systemd/user"
+  local service_file="$service_dir/${SERVICE_NAME}.service"
+  mkdir -p "$service_dir"
+  cat > "$service_file" <<UNIT
+[Unit]
+Description=Cline Kanban Dashboard
+After=network.target
+
+[Service]
+ExecStart=$(command -v kanban) --no-open --port ${KANBAN_PORT}
+WorkingDirectory=${PROJECT}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload
+  systemctl --user enable "$SERVICE_NAME"
+  systemctl --user start "$SERVICE_NAME"
+  echo "kanban: systemd サービスを登録・起動しました"
+  echo "  再起動後も自動で起動します"
+}
 
 cmd_add() {
   local prompt="${1:?タスク説明を指定: wt add <説明> [ブランチ]}"
   local base="${2:-main}"
   require_kanban
-  require_server
+  ensure_server
   kanban task create \
     --prompt "$prompt" \
     --project-path "$PROJECT" \
@@ -71,7 +151,7 @@ cmd_add() {
 cmd_start() {
   local task_id="${1:?task-id を指定: wt start <task-id>}"
   require_kanban
-  require_server
+  ensure_server
   kanban task start \
     --task-id "$task_id" \
     --project-path "$PROJECT"
@@ -80,7 +160,7 @@ cmd_start() {
 cmd_ls() {
   local column="${1:-}"
   require_kanban
-  require_server
+  ensure_server
   if [ -n "$column" ]; then
     kanban task list --project-path "$PROJECT" --column "$column"
   else
@@ -91,22 +171,26 @@ cmd_ls() {
 cmd_rm() {
   local task_id="${1:?task-id を指定: wt rm <task-id>}"
   require_kanban
-  require_server
+  ensure_server
   kanban task trash \
     --task-id "$task_id" \
     --project-path "$PROJECT"
 }
 
-cmd_board() {
-  require_kanban
-  echo "kanban Web UI を起動します (Ctrl+C で停止)"
-  echo "http://127.0.0.1:${KANBAN_PORT}/"
-  exec kanban --no-open --port "$KANBAN_PORT"
-}
-
 cmd_status() {
   echo "=== Project ==="
   echo "  $PROJECT"
+  echo ""
+
+  echo "=== Kanban ==="
+  if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
+    echo "  running (port $KANBAN_PORT)"
+  else
+    echo "  stopped"
+  fi
+  if systemctl --user is-enabled "$SERVICE_NAME" &>/dev/null; then
+    echo "  $(systemctl --user is-active "$SERVICE_NAME") (systemd)"
+  fi
   echo ""
 
   echo "=== Git Worktrees ==="
@@ -119,26 +203,20 @@ cmd_status() {
   else
     echo "  (セッションなし)"
   fi
-  echo ""
-
-  echo "=== Kanban (port $KANBAN_PORT) ==="
-  if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
-    echo "  running"
-    kanban task list --project-path "$PROJECT" 2>/dev/null || true
-  else
-    echo "  not running"
-  fi
 }
 
 # ──────────────────────────────────────────────
 
 case "${1:-}" in
-  add)    shift; cmd_add "$@" ;;
-  start)  shift; cmd_start "$@" ;;
-  ls)     shift; cmd_ls "$@" ;;
-  rm)     shift; cmd_rm "$@" ;;
-  board)  cmd_board ;;
-  status) cmd_status ;;
+  up)      cmd_up ;;
+  down)    cmd_down ;;
+  log)     cmd_log ;;
+  add)     shift; cmd_add "$@" ;;
+  start)   shift; cmd_start "$@" ;;
+  ls)      shift; cmd_ls "$@" ;;
+  rm)      shift; cmd_rm "$@" ;;
+  status)  cmd_status ;;
+  install-service) cmd_install_service ;;
   -h|--help) usage ;;
-  *)      usage ;;
+  *)       usage ;;
 esac

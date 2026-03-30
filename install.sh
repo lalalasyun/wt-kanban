@@ -28,6 +28,13 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 echo "  git, tmux, node, npm ... OK"
 
+if command -v gh &>/dev/null; then
+  echo "  gh (GitHub CLI) ... OK"
+else
+  echo "  gh (GitHub CLI) ... 未インストール (PR 作成に必要)"
+  echo "    https://cli.github.com/"
+fi
+
 # 2. kanban インストール
 echo ""
 echo "[2/5] cline kanban インストール..."
@@ -87,10 +94,12 @@ echo "========================"
 echo "セットアップ完了!"
 echo ""
 echo "使い方:"
-echo "  wt status                        # 状態確認"
-echo "  wt add \"タスク説明\" main          # タスク追加"
-echo "  wt start <task-id>               # タスク開始"
-echo "  wt ls                            # 一覧"
-echo "  wt rm <task-id>                  # 削除"
 echo "  wt up / wt down / wt log         # サーバー管理"
+echo "  wt status                        # 状態確認"
 echo "  wt --help                        # ヘルプ"
+echo ""
+echo "タスク管理 (kanban 直接使用):"
+echo "  kanban task create --prompt \"説明\" --project-path . --base-ref main --auto-review-mode pr"
+echo "  kanban task start  --task-id <id> --project-path ."
+echo "  kanban task list   --project-path ."
+echo "  kanban task trash  --task-id <id> --project-path ."

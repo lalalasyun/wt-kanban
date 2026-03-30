@@ -26,28 +26,69 @@ wt status                          全体の状態サマリ
 wt install-service                 systemd で永続化 (初回のみ)
 ```
 
-## タスク管理 (kanban 直接使用)
+## kanban コマンドリファレンス
+
+タスク管理は kanban を直接使用する。
+
+### タスク操作
 
 ```bash
-# タスク作成 (PR自動作成モード)
+# 作成 (backlog に追加)
 kanban task create \
   --prompt "機能実装の説明" \
   --project-path . \
   --base-ref main \
-  --auto-review-mode pr
+  --auto-review-mode pr \
+  --start-in-plan-mode           # plan モードで開始 (省略可)
 
-# タスク開始 (worktree 作成 + エージェント起動)
+# 開始 (worktree 作成 + エージェント起動 → in_progress へ)
 kanban task start --task-id <id> --project-path .
 
-# タスク一覧
+# 更新
+kanban task update --task-id <id> --project-path . \
+  --prompt "説明を変更" \
+  --base-ref develop \
+  --auto-review-mode pr \
+  --auto-review-enabled
+
+# 一覧
 kanban task list --project-path .
+kanban task list --project-path . --column backlog
 kanban task list --project-path . --column in_progress
+kanban task list --project-path . --column review
 
-# タスク削除
+# trash へ移動 (worktree クリーンアップ)
 kanban task trash --task-id <id> --project-path .
+kanban task trash --column review --project-path .    # カラム一括
 
-# タスク依存関係
+# 永久削除
+kanban task delete --task-id <id> --project-path .
+kanban task delete --column trash --project-path .    # trash 一括削除
+```
+
+### タスク依存関係
+
+```bash
+# リンク (task-id が linked-task-id の完了を待つ)
 kanban task link --task-id <id1> --linked-task-id <id2> --project-path .
+
+# リンク解除
+kanban task unlink --dependency-id <dep-id> --project-path .
+```
+
+前提タスクが trash に移動すると、待機中の backlog タスクが自動開始される。
+
+### フック (エージェント連携)
+
+```bash
+# レビュー状態に遷移
+kanban hooks notify --event to_review --source claude
+
+# 作業に復帰
+kanban hooks notify --event to_in_progress --source claude
+
+# アクティビティ通知
+kanban hooks notify --event activity --activity-text "テスト完了" --source claude
 ```
 
 ### auto-review-mode
@@ -57,6 +98,23 @@ kanban task link --task-id <id1> --linked-task-id <id2> --project-path .
 | `commit` | 完了時にベースブランチへ cherry-pick |
 | `pr` | 完了時にエージェントが `gh pr create` でPR作成 |
 | `move_to_trash` | 完了時にそのまま trash へ移動 |
+
+### タスク状態フロー
+
+```
+backlog → in_progress → review → trash
+            ↑              │
+            └──────────────┘ (to_in_progress)
+```
+
+### kanban サーバー
+
+```bash
+# 起動オプション
+kanban --no-open --port 3484         # ブラウザ自動起動なし
+kanban --host 0.0.0.0 --port 3484   # 外部公開
+kanban --skip-shutdown-cleanup       # 終了時に worktree を残す
+```
 
 ## セットアップ
 

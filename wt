@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# wt - worktree + kanban + tmux ワークフロー管理 CLI
+# https://github.com/lalalasyun/wt-kanban
+
+PROJECT="${WT_PROJECT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+TMUX_SESSION="${WT_TMUX_SESSION:-dev}"
+KANBAN_PORT="${WT_PORT:-3484}"
+
+# ──────────────────────────────────────────────
+
+usage() {
+  cat <<'EOF'
+wt - worktree + kanban + tmux ワークフロー管理
+
+使い方:
+  wt add   <タスク説明> [ブランチ]   タスクを作成 (kanban backlog に追加)
+  wt start <task-id>               タスクを開始 (worktree 作成 + tmux + claude)
+  wt ls    [カラム]                 タスク一覧 (backlog|in_progress|review|trash)
+  wt rm    <task-id>               タスクを削除 (worktree もクリーンアップ)
+  wt board                         kanban Web UI を起動
+  wt status                        全体の状態サマリ
+
+環境変数:
+  WT_PROJECT        対象リポジトリのパス (デフォルト: git root)
+  WT_TMUX_SESSION   tmux セッション名 (デフォルト: dev)
+  WT_PORT           kanban ポート (デフォルト: 3484)
+
+例:
+  wt add "Issue #45: archive search を実装" main
+  wt start 34966
+  wt ls
+  wt ls in_progress
+  wt rm 34966
+  wt board
+EOF
+}
+
+# ──────────────────────────────────────────────
+
+require_kanban() {
+  if ! command -v kanban &>/dev/null; then
+    echo "Error: kanban がインストールされていません"
+    echo "  sudo npm install -g kanban"
+    exit 1
+  fi
+}
+
+require_server() {
+  if ! curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
+    echo "Error: kanban サーバーが起動していません"
+    echo "  wt board  で起動するか、別ターミナルで kanban --no-open を実行してください"
+    exit 1
+  fi
+}
+
+# ──────────────────────────────────────────────
+
+cmd_add() {
+  local prompt="${1:?タスク説明を指定: wt add <説明> [ブランチ]}"
+  local base="${2:-main}"
+  require_kanban
+  require_server
+  kanban task create \
+    --prompt "$prompt" \
+    --project-path "$PROJECT" \
+    --base-ref "$base"
+}
+
+cmd_start() {
+  local task_id="${1:?task-id を指定: wt start <task-id>}"
+  require_kanban
+  require_server
+  kanban task start \
+    --task-id "$task_id" \
+    --project-path "$PROJECT"
+}
+
+cmd_ls() {
+  local column="${1:-}"
+  require_kanban
+  require_server
+  if [ -n "$column" ]; then
+    kanban task list --project-path "$PROJECT" --column "$column"
+  else
+    kanban task list --project-path "$PROJECT"
+  fi
+}
+
+cmd_rm() {
+  local task_id="${1:?task-id を指定: wt rm <task-id>}"
+  require_kanban
+  require_server
+  kanban task trash \
+    --task-id "$task_id" \
+    --project-path "$PROJECT"
+}
+
+cmd_board() {
+  require_kanban
+  echo "kanban Web UI を起動します (Ctrl+C で停止)"
+  echo "http://127.0.0.1:${KANBAN_PORT}/"
+  exec kanban --no-open --port "$KANBAN_PORT"
+}
+
+cmd_status() {
+  echo "=== Project ==="
+  echo "  $PROJECT"
+  echo ""
+
+  echo "=== Git Worktrees ==="
+  cd "$PROJECT" && git worktree list
+  echo ""
+
+  echo "=== tmux ($TMUX_SESSION) ==="
+  if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    tmux list-windows -t "$TMUX_SESSION" -F '  #{window_index}: #{window_name} #{?window_active,(active),}'
+  else
+    echo "  (セッションなし)"
+  fi
+  echo ""
+
+  echo "=== Kanban (port $KANBAN_PORT) ==="
+  if curl -sf "http://127.0.0.1:${KANBAN_PORT}/" &>/dev/null; then
+    echo "  running"
+    kanban task list --project-path "$PROJECT" 2>/dev/null || true
+  else
+    echo "  not running"
+  fi
+}
+
+# ──────────────────────────────────────────────
+
+case "${1:-}" in
+  add)    shift; cmd_add "$@" ;;
+  start)  shift; cmd_start "$@" ;;
+  ls)     shift; cmd_ls "$@" ;;
+  rm)     shift; cmd_rm "$@" ;;
+  board)  cmd_board ;;
+  status) cmd_status ;;
+  -h|--help) usage ;;
+  *)      usage ;;
+esac

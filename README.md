@@ -15,12 +15,38 @@ curl -fsSL https://raw.githubusercontent.com/lalalasyun/wt-kanban/main/install.s
 - git, tmux, Node.js, npm
 - [cline kanban](https://github.com/cline/kanban) (`install.sh` が自動インストール)
 
+## コマンド一覧
+
+```
+wt up                              kanban サーバーを起動
+wt down                            kanban サーバーを停止
+wt log                             kanban サーバーのログ表示
+wt add <タスク説明> [ブランチ]       タスクを作成
+wt start <task-id>                 タスクを開始 (worktree + エージェント)
+wt ls [カラム]                      タスク一覧
+wt rm <task-id>                    タスクを削除
+wt status                          全体の状態サマリ
+wt install-service                 systemd で永続化 (初回のみ)
+```
+
+`wt add` / `wt ls` / `wt start` / `wt rm` はサーバー未起動時に自動で `wt up` する。
+
+## セットアップ
+
+```bash
+# 1. インストール
+curl -fsSL https://raw.githubusercontent.com/lalalasyun/wt-kanban/main/install.sh | bash
+
+# 2. systemd で永続化 (再起動後も自動起動)
+wt install-service
+
+# 3. 動作確認
+wt status
+```
+
 ## 使い方
 
 ```bash
-# kanban ダッシュボードを起動 (先に起動が必要)
-wt board
-
 # タスクを追加
 wt add "Issue #45: archive search を実装" main
 
@@ -34,8 +60,10 @@ wt start <task-id>
 # タスク削除
 wt rm <task-id>
 
-# 全体の状態確認
-wt status
+# サーバー管理
+wt up       # 起動
+wt down     # 停止
+wt log      # ログ
 ```
 
 ## 運用パターン
@@ -51,19 +79,19 @@ while true; do claude; echo "exited: $(date)"; sleep 2; done
 ### 複数タスク並列
 
 ```bash
-tmux new -s dev
-
-# ウィンドウ 0: kanban ダッシュボード
-wt board
-
-# 別ウィンドウ: タスク追加 → 開始
+# タスク追加 → 開始 (サーバーは自動起動)
 wt add "Issue #45: 機能実装" main
-wt start <task-id>
+wt add "Issue #46: ドキュメント整備" main
+wt start <task-id-1>
+wt start <task-id-2>
+
+# 状態確認
+wt status
 ```
 
 ### 外出先からの監視
 
-Termius や SSH トンネルでポート 3484 を転送:
+SSH トンネルでポート 3484 を転送:
 
 ```bash
 ssh -L 3484:localhost:3484 user@server
@@ -82,7 +110,9 @@ ssh -L 3484:localhost:3484 user@server
 ## アンインストール
 
 ```bash
+systemctl --user disable --now kanban  # サービス停止
 sudo rm /usr/local/bin/wt
 rm -rf ~/.wt-kanban
+rm ~/.config/systemd/user/kanban.service
 sudo npm uninstall -g kanban  # 任意
 ```

@@ -13,7 +13,7 @@ echo "========================"
 
 # 1. 依存チェック
 echo ""
-echo "[1/4] 依存チェック..."
+echo "[1/5] 依存チェック..."
 
 missing=()
 command -v git    &>/dev/null || missing+=(git)
@@ -30,7 +30,7 @@ echo "  git, tmux, node, npm ... OK"
 
 # 2. kanban インストール
 echo ""
-echo "[2/4] cline kanban インストール..."
+echo "[2/5] cline kanban インストール..."
 
 if command -v kanban &>/dev/null; then
   echo "  kanban $(kanban --version) ... 既にインストール済み"
@@ -42,7 +42,7 @@ fi
 
 # 3. wt コマンド配置
 echo ""
-echo "[3/4] wt コマンド配置..."
+echo "[3/5] wt コマンド配置..."
 
 if [ -d "$INSTALL_DIR" ]; then
   echo "  既存インストールを更新..."
@@ -57,7 +57,7 @@ echo "  $BIN_DIR/wt -> $INSTALL_DIR/wt ... OK"
 
 # 4. tmux 設定
 echo ""
-echo "[4/4] tmux 設定..."
+echo "[4/5] tmux 設定..."
 
 TMUX_CONF="$HOME/.tmux.conf"
 touch "$TMUX_CONF"
@@ -75,20 +75,22 @@ add_tmux_setting "set -g history-limit 50000"
 add_tmux_setting "set -g status-interval 5"
 echo "  $TMUX_CONF ... OK"
 
+# 5. systemd 永続化
+echo ""
+echo "[5/5] systemd サービス登録..."
+
+wt install-service 2>/dev/null && echo "  kanban サービス ... OK" || echo "  スキップ (手動で wt install-service を実行してください)"
+
 # 完了
 echo ""
 echo "========================"
 echo "セットアップ完了!"
 echo ""
 echo "使い方:"
-echo "  wt board                         # kanban Web UI を起動"
+echo "  wt status                        # 状態確認"
 echo "  wt add \"タスク説明\" main          # タスク追加"
-echo "  wt ls                            # 一覧"
 echo "  wt start <task-id>               # タスク開始"
+echo "  wt ls                            # 一覧"
 echo "  wt rm <task-id>                  # 削除"
-echo "  wt status                        # 全体状態"
+echo "  wt up / wt down / wt log         # サーバー管理"
 echo "  wt --help                        # ヘルプ"
-echo ""
-echo "推奨: tmux 内で kanban を常駐させる"
-echo "  tmux new -s dev"
-echo "  wt board"
